@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1080, height=1920" />
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.15.0/dist/gsap.min.js"></script>
+    <script src="assets/vendor/brush.js"></script>
+    <style>
+      :root { --paper: #f4efe4; --ink: #23201c; --red: #e0242f; }
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { width: 1080px; height: 1920px; overflow: hidden; background: var(--paper); }
+      #root { position: relative; width: 100%; height: 100%; }
+      #paper { position: absolute; inset: 0; }
+      #paper canvas { display: block; width: 1080px !important; height: 1920px !important; }
+      /* handwriting: Caveat (SIL OFL 1.1), see assets/fonts/OFL-Caveat.txt */
+      @font-face {
+        font-family: "Caveat Hand";
+        src: url("assets/fonts/caveat-latin-700.woff2") format("woff2");
+        font-weight: 400 700; font-display: block;
+      }
+      .hand { font-family: "Caveat Hand", cursive; font-weight: 700; color: var(--ink); }
+      /* write-on: a soft mask edge sweeps left to right (--w is tweened by GSAP) */
+      .w {
+        display: inline-block;
+        padding: 0.08em 0.18em 0.22em 0.12em; margin: -0.08em -0.18em -0.22em -0.12em;
+        --w: 0%;
+        -webkit-mask-image: linear-gradient(90deg, #000 calc(var(--w) - 9%), transparent var(--w));
+        mask-image: linear-gradient(90deg, #000 calc(var(--w) - 9%), transparent var(--w));
+      }
+      #title { position: absolute; left: 0; width: 1080px; top: 240px; text-align: center; font-size: 120px; line-height: 1; }
+    </style>
+  </head>
+  <body>
+    <div id="root" data-composition-id="main" data-start="0" data-duration="4" data-width="1080" data-height="1920">
+      <!-- p5.brush paints everything into this host on every hf-seek -->
+      <div id="paper" class="clip" data-start="0" data-duration="4" data-track-index="0" data-track-kind="graphics"></div>
+      <div id="title" class="clip" data-start="0" data-duration="4" data-track-index="1" data-track-kind="graphics">
+        <span id="titleText" class="hand w">Your idea here</span>
+      </div>
+    </div>
+
+    <script>
+      // ========= Blank starter: one pen line, one wash, one hatch. Replace the scene, keep the kit. =========
+      const W = 540, H = 960;                 // brush units; pixelDensity 2 -> 1080x1920 px
+      const PAPER = "#f4efe4", INK = "#23201c", RED = "#e0242f", BLUE = "#3f74a8";
+      const SEED = 11;
+      brush.createCanvas(W, H, { parent: document.getElementById("paper"), pixelDensity: 2 });
+      brush.scaleBrushes(2.6);
+      brush.angleMode(brush.RADIANS);
+      // a bold felt-tip: the built-in "marker" is soft and pinkish. Added after scaleBrushes, so its size is in canvas units.
+      brush.add("redmarker", { type: "marker", weight: 8, scatter: 0.2, opacity: 7, spacing: 0.03, pressure: [1.15, 0.85], markerTip: true, noise: 0.2 });
+
+      // ---------- kit: time, easing, seeds, draw-on ----------
+      const clamp01 = (v) => Math.max(0, Math.min(1, v));
+      const seg = (t, a, b) => clamp01((t - a) / (b - a));                 // 0..1 progress between two times
+      const io = (k) => (k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2);
+      const out = (k) => 1 - Math.pow(1 - k, 3);
+      // one seed per element: a stroke still growing never changes the texture of the others
+      function sd(id) { brush.seed(SEED * 1000 + id * 37); brush.noiseSeed(SEED * 500 + id * 53); }
+      function dense(pts, step = 2.5) {                                    // resample so draw-on grows smoothly
+        const o = [pts[0].slice()];
+        for (let i = 0; i < pts.length - 1; i++) {
+          const a = pts[i], b = pts[i + 1];
+          const n = Math.max(1, Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) / step));
+          for (let j = 1; j <= n; j++) { const u = j / n; o.push([a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u]); }
+        }
+        return o;
+      }
+      function drawOn(pts, k, name, color, weight, curv = 0) {             // the first k (0..1) of a path
+        if (k <= 0.002) return;
+        const d = dense(pts);
+        const f = (d.length - 1) * clamp01(k), i = Math.floor(f), u = f - i;
+        const s = d.slice(0, i + 1);
+        if (i < d.length - 1) { const a = d[i], b = d[i + 1]; s.push([a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u]); }
+        if (s.length < 2) return;
+        brush.set(name, color, weight);
+        brush.spline(s, curv);
+      }
+      function wash(pts, color, alpha) {                                   // watercolour fill (never fully dark)
+        if (alpha < 1) return;
+        brush.noStroke(); brush.fillBleed(0.28); brush.fillTexture(0.55, 0.6);
+        brush.fill(color, alpha); brush.polygon(pts); brush.noFill();
+      }
+      function blob(cx, cy, rx, ry, salt) {                                // irregular outline, deterministic
+        const p = [];
+        for (let i = 0; i < 40; i++) {
+          const a = (i / 40) * Math.PI * 2, f = 1 + 0.07 * Math.sin(3 * a + salt) + 0.04 * Math.sin(5 * a + salt * 2.3);
+          p.push([cx + rx * f * Math.cos(a), cy + ry * f * Math.sin(a)]);
+        }
+        return p;
+      }
+
+      // ---------- the scene: a pure function of time ----------
+      function renderAt(t) {
+        brush.seed(SEED); brush.noiseSeed(SEED);
+        brush.clear(PAPER);
+        brush.push();
+        brush.translate(-W / 2, -H / 2);
+        try {
+          // paint first in paint order (under the lines), timed just after the pen: the pen leads
+          sd(1); wash(blob(270, 470, 120, 110, 1.3), BLUE, 120 * out(seg(t, 1.0, 1.6)));
+          // pencil hatching on the shadow side
+          const kh = io(seg(t, 1.5, 2.1));
+          if (kh > 0.002) {
+            sd(2); brush.clip([300, 360, 300 + 110 * kh, 590]);
+            brush.noStroke(); brush.noFill(); brush.hatchStyle("HB", INK, 0.7);
+            brush.hatch(6, 0.75, { rand: 0.15, continuous: true });
+            brush.circle(270, 470, 108); brush.noHatch(); brush.noClip();
+          }
+          // pen outline, a slightly overshot loop like a quick hand
+          const loop = []; for (let i = 0; i <= 64; i++) { const a = -2.2 + (i / 64) * Math.PI * 2.08; loop.push([270 + 112 * Math.cos(a), 470 + 108 * Math.sin(a)]); }
+          sd(3); drawOn(loop, io(seg(t, 0.4, 1.2)), "pen", INK, 1.4, 0.5);
+          // red marker underline under the title
+          const ul = []; for (let x = 150; x <= 390; x += 4) ul.push([x, 196 + 1.6 * Math.sin(x * 0.27)]);
+          sd(4); drawOn(ul, io(seg(t, 0.6, 1.0)), "redmarker", RED, 0.75, 0.5);
+        } finally {
+          brush.pop();   // always pop, or one error stacks transforms on every later frame
+        }
+        brush.render();  // mandatory: nothing shows without it
+      }
+      window.addEventListener("hf-seek", (e) => renderAt(e.detail.time));
+      renderAt(0);
+
+      // ---------- handwriting on top (GSAP, paused timeline) ----------
+      const tl = gsap.timeline({ paused: true });
+      tl.fromTo("#titleText", { "--w": "0%" }, { "--w": "112%", duration: 0.6, ease: "power1.inOut" }, 0.05);
+      window.__timelines = window.__timelines || {};
+      window.__timelines["main"] = tl;
+      tl.seek(0);
+    </script>
+  </body>
+</html>

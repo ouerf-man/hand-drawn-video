@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=__W2__, height=__H2__" />
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.15.0/dist/gsap.min.js"></script>
+    <script src="assets/vendor/brush.js"></script>
+    <script src="assets/data.js"></script>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { width: __W2__px; height: __H2__px; overflow: hidden; background: #efefed; }
+      #root { position: relative; width: 100%; height: 100%; }
+      #paper { position: absolute; inset: 0; }
+      #paper canvas { display: block; width: __W2__px !important; height: __H2__px !important; }
+    </style>
+  </head>
+  <body>
+    <div id="root" data-composition-id="main" data-start="0" data-duration="__DUR__" data-width="__W2__" data-height="__H2__">
+      <div id="paper" class="clip" data-start="0" data-duration="__DUR__" data-track-index="0" data-track-kind="graphics"></div>
+    </div>
+    <script>
+      // Screen-print style: four flat inks, one per tone group, redrawn 12 times a second.
+      const D = window.DRAWIFY, W = D.w, H = D.h;
+      const BG = "#efefed";
+      const INKS = ["#1e1e1e", "#a05a5a", "#d2aa96", "#f0dcc8"];   // dark -> light
+      brush.createCanvas(W, H, { parent: document.getElementById("paper"), pixelDensity: 2 });
+      brush.angleMode(brush.RADIANS);
+      const pts = (f) => { const o = []; for (let i = 0; i < f.length; i += 2) o.push([f[i], f[i + 1]]); return o; };
+      const area = (f) => { let s = 0; const n = f.length / 2; for (let i = 0; i < n; i++) { const j = (i + 1) % n; s += f[2 * i] * f[2 * j + 1] - f[2 * j] * f[2 * i + 1]; } return Math.abs(s) / 2; };
+
+      function renderAt(t) {
+        const fr = D.frames[Math.min(D.frames.length - 1, Math.max(0, Math.floor(t * D.fps + 1e-6)))];
+        brush.seed(7); brush.noiseSeed(7);
+        brush.clear(BG);
+        brush.push();
+        brush.translate(-W / 2, -H / 2);
+        brush.noStroke();
+        if (fr.sil.length) {
+          const s = []; for (let i = 0; i < fr.sil.length; i += 3) s.push([fr.sil[i], fr.sil[i + 1]]);
+          brush.wash(INKS[3], 255); brush.polygon(s); brush.noWash();
+        }
+        // largest first: a shape inside another is always smaller, so islands (eyes, skin in a beard) stay on top
+        fr.tones.map((tn) => ({ tn, a: area(tn.p) })).sort((x, y) => y.a - x.a)
+          // black is kept for hair, beard and features: body shadows print in the second ink (no black holes on clothes)
+          .forEach(({ tn }) => { brush.wash(INKS[tn.r === 0 && !tn.h ? 1 : tn.r], 255); brush.polygon(pts(tn.p)); brush.noWash(); });
+        brush.pop();
+        brush.render();
+      }
+      window.addEventListener("hf-seek", (e) => renderAt(e.detail.time));
+      renderAt(0);
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+      window.__timelines["main"] = tl;
+      tl.seek(0);
+    </script>
+  </body>
+</html>

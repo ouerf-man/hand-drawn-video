@@ -1,0 +1,362 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1080, height=1920" />
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.15.0/dist/gsap.min.js"></script>
+    <script src="assets/vendor/brush.js"></script>
+    <style>
+      :root {
+        --paper: #f4efe4;
+        --ink: #23201c;
+        --muted: #6f665a;
+        --red: #e0242f;
+      }
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { width: 1080px; height: 1920px; overflow: hidden; background: var(--paper); }
+      #root { position: relative; width: 100%; height: 100%; }
+      #paper { position: absolute; inset: 0; }
+      #paper canvas { display: block; width: 1080px !important; height: 1920px !important; }
+
+      /* handwriting: Caveat (SIL OFL 1.1), see assets/fonts/OFL-Caveat.txt */
+      @font-face {
+        font-family: "Caveat Hand";
+        src: url("assets/fonts/caveat-latin-700.woff2") format("woff2");
+        font-weight: 400 700; font-style: normal; font-display: block;
+      }
+      .hand { font-family: "Caveat Hand", cursive; font-weight: 700; }
+
+      /* write-on: a soft-edged mask sweeps left to right (--w is tweened by GSAP).
+         Padding + negative margin give swashes room so the mask never crops a glyph. */
+      .w {
+        display: inline-block;
+        padding: 0.08em 0.18em 0.22em 0.12em;
+        margin: -0.08em -0.18em -0.22em -0.12em;
+        --w: 0%;
+        -webkit-mask-image: linear-gradient(90deg, #000 calc(var(--w) - 9%), transparent var(--w));
+        mask-image: linear-gradient(90deg, #000 calc(var(--w) - 9%), transparent var(--w));
+      }
+
+      /* title block: 168-300 px, red marker underline is drawn at 322 px by p5.brush */
+      .head { position: absolute; left: 0; width: 1080px; top: 160px; text-align: center; }
+      .line { display: block; }
+      .kick { font-size: 54px; line-height: 56px; color: var(--ink); }
+      .big { font-size: 100px; line-height: 86px; color: var(--ink); }
+      #ctaBig { color: var(--red); }
+      #cta .line { opacity: 0; }   /* hidden until the payoff */
+
+      /* step labels sit beside each drawing, never on it */
+      .lab { position: absolute; width: 500px; }
+      .lab.r { left: 506px; text-align: left; }
+      .lab.l { left: 66px; text-align: right; }
+      .lab .t { font-size: 80px; line-height: 70px; color: var(--ink); }
+      .lab .t b { color: var(--red); font-weight: inherit; }
+      .lab .s { font-size: 48px; line-height: 50px; color: var(--muted); }
+      #lab1 { top: 384px; }
+      #lab2 { top: 632px; }
+      #lab3 { top: 880px; }
+      #lab4 { top: 1128px; }
+    </style>
+  </head>
+  <body>
+    <div id="root" data-composition-id="main" data-start="0" data-duration="9.3" data-width="1080" data-height="1920">
+      <!-- p5.brush draws the whole sketchnote into this host on every hf-seek -->
+      <div id="paper" class="clip" data-start="0" data-duration="9.3" data-track-index="0" data-track-kind="graphics"></div>
+
+      <div id="title" class="head clip" data-start="0" data-duration="9.3" data-track-index="1" data-track-kind="graphics">
+        <span class="line"><span id="titleKick" class="hand kick w">How Claude turns raw video</span></span>
+        <span class="line"><span id="titleBig" class="hand big w">into a reel</span></span>
+      </div>
+      <div id="cta" class="head clip" data-start="0" data-duration="9.3" data-track-index="2" data-track-kind="graphics">
+        <span class="line"><span id="ctaKick" class="hand kick w">Now it is your turn:</span></span>
+        <span class="line"><span id="ctaBig" class="hand big w">DRAW YOURS</span></span>
+      </div>
+
+      <div id="lab1" class="lab r clip" data-start="0" data-duration="9.3" data-track-index="3" data-track-kind="graphics">
+        <span class="line"><span id="lab1t" class="hand t w"><b>1.</b> Raw clip</span></span>
+        <span class="line"><span id="lab1s" class="hand s w">you just film it</span></span>
+      </div>
+      <div id="lab2" class="lab l clip" data-start="0" data-duration="9.3" data-track-index="4" data-track-kind="graphics">
+        <span class="line"><span id="lab2t" class="hand t w"><b>2.</b> Transcript</span></span>
+        <span class="line"><span id="lab2s" class="hand s w">Claude reads every word</span></span>
+      </div>
+      <div id="lab3" class="lab r clip" data-start="0" data-duration="9.3" data-track-index="5" data-track-kind="graphics">
+        <span class="line"><span id="lab3t" class="hand t w"><b>3.</b> The plan</span></span>
+        <span class="line"><span id="lab3s" class="hand s w">cuts, zooms, captions</span></span>
+      </div>
+      <div id="lab4" class="lab l clip" data-start="0" data-duration="9.3" data-track-index="6" data-track-kind="graphics">
+        <span class="line"><span id="lab4t" class="hand t w"><b>4.</b> Final reel</span></span>
+        <span class="line"><span id="lab4s" class="hand s w">rendered, ready to post</span></span>
+      </div>
+    </div>
+
+    <script>
+      // ================= p5.brush sketchnote: a pure function of time =================
+      const W = 540, H = 960;                 // brush units; pixelDensity 2 -> 1080x1920 px
+      const PAPER = "#f4efe4", INK = "#23201c", RED = "#e0242f", BLUE = "#3f74a8", OCHRE = "#d99a2b";
+      const SEED = 23;
+      brush.createCanvas(W, H, { parent: document.getElementById("paper"), pixelDensity: 2 });
+      brush.scaleBrushes(2.6);
+      brush.angleMode(brush.RADIANS);
+      // a bold red marker: added AFTER scaleBrushes, so its weight is in canvas units (not scaled).
+      // The built-in "marker" is soft and pinkish; type "marker" with real opacity reads as a felt-tip.
+      brush.add("redmarker", { type: "marker", weight: 8, scatter: 0.2, opacity: 7, spacing: 0.03, pressure: [1.15, 0.85], markerTip: true, noise: 0.2 });
+
+      // ---------- timing + easing ----------
+      const clamp01 = (v) => Math.max(0, Math.min(1, v));
+      const seg = (t, a, b) => clamp01((t - a) / (b - a));
+      const io = (k) => (k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2); // slow in + slow out
+      const out = (k) => 1 - Math.pow(1 - k, 3);
+
+      // every element gets its own seed, so a stroke still growing never changes
+      // the random stream (texture) of the strokes drawn after it
+      function sd(id) { brush.seed(SEED * 1000 + id * 37); brush.noiseSeed(SEED * 500 + id * 53); }
+
+      // ---------- geometry helpers ----------
+      function dense(pts, step = 2.5) {          // resample so a draw-on grows smoothly
+        const o = [pts[0].slice()];
+        for (let i = 0; i < pts.length - 1; i++) {
+          const a = pts[i], b = pts[i + 1];
+          const n = Math.max(1, Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) / step));
+          for (let j = 1; j <= n; j++) { const u = j / n; o.push([a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u]); }
+        }
+        return o;
+      }
+      const rectPts = (x, y, w, h) => [[x, y], [x + w, y], [x + w, y + h], [x, y + h], [x, y + 0.5]];
+      function roundRectPts(x, y, w, h, r) {     // starts top-centre, clockwise
+        const p = [[x + w / 2, y]];
+        const corner = (cx, cy, a0) => { for (let i = 0; i <= 6; i++) { const a = a0 + (i / 6) * Math.PI / 2; p.push([cx + r * Math.cos(a), cy + r * Math.sin(a)]); } };
+        corner(x + w - r, y + r, -Math.PI / 2); corner(x + w - r, y + h - r, 0);
+        corner(x + r, y + h - r, Math.PI / 2); corner(x + r, y + r, Math.PI);
+        p.push([x + w / 2 - 0.5, y]);
+        return p;
+      }
+      function blobPts(cx, cy, rx, ry, salt) {   // irregular wash outline, deterministic
+        const p = [];
+        for (let i = 0; i < 40; i++) {
+          const a = (i / 40) * Math.PI * 2;
+          const f = 1 + 0.07 * Math.sin(3 * a + salt) + 0.04 * Math.sin(5 * a + salt * 2.3);
+          p.push([cx + rx * f * Math.cos(a), cy + ry * f * Math.sin(a)]);
+        }
+        return p;
+      }
+      function bez(p0, p1, p2, p3, n = 40) {
+        const o = [];
+        for (let i = 0; i <= n; i++) {
+          const u = i / n, v = 1 - u;
+          o.push([v*v*v*p0[0] + 3*v*v*u*p1[0] + 3*v*u*u*p2[0] + u*u*u*p3[0],
+                  v*v*v*p0[1] + 3*v*v*u*p1[1] + 3*v*u*u*p2[1] + u*u*u*p3[1]]);
+        }
+        return o;
+      }
+      function wobbleLine(x0, x1, y, amp, salt) {
+        const p = [];
+        for (let x = x0; x <= x1 + 0.01; x += 4) p.push([x, y + amp * Math.sin(x * 0.27 + salt)]);
+        return p;
+      }
+
+      // ---------- drawing primitives ----------
+      // draw the first k (0..1) of a path, with an interpolated head so it grows smoothly
+      function drawOn(pts, k, name, color, weight, curv = 0) {
+        if (k <= 0.002) return;
+        const d = dense(pts);
+        const f = (d.length - 1) * clamp01(k), i = Math.floor(f), u = f - i;
+        const s = d.slice(0, i + 1);
+        if (i < d.length - 1) { const a = d[i], b = d[i + 1]; s.push([a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u]); }
+        if (s.length < 2) return;
+        brush.set(name, color, weight);
+        brush.spline(s, curv);
+      }
+      function wash(pts, color, alpha) {          // watercolour fill fading in
+        if (alpha < 1) return;
+        brush.noStroke();
+        brush.fillBleed(0.28);
+        brush.fillTexture(0.55, 0.6);
+        brush.fill(color, alpha);
+        brush.polygon(pts);
+        brush.noFill();
+      }
+      function hatchReveal(x, y, w, h, k, style, wt, dist, ang) {   // hatch revealed left to right
+        if (k <= 0.002) return;
+        brush.clip([x - 3, y - 3, x - 3 + (w + 6) * k, y + h + 3]);
+        brush.noStroke(); brush.noFill();
+        brush.hatchStyle(style, INK, wt);
+        brush.hatch(dist, ang, { rand: 0.15, continuous: true });
+        brush.rect(x, y, w, h);
+        brush.noHatch();
+        brush.noClip();
+      }
+      function massReveal(pts, bbox, k, name, color) {               // crayon/pastel mass revealed left to right
+        if (k <= 0.002) return;
+        const [x, y, w, h] = bbox;
+        brush.clip([x - 3, y - 3, x - 3 + (w + 6) * k, y + h + 3]);
+        brush.noStroke(); brush.noFill();
+        brush.mass(name, color, { strength: 0.9, precision: 0.6 });
+        brush.polygon(pts);
+        brush.noMass();
+        brush.noClip();
+      }
+      function arrow(p0, p1, p2, p3, k) {          // charcoal shaft, then the head
+        const shaft = bez(p0, p1, p2, p3);
+        drawOn(shaft, k / 0.82, "charcoal", INK, 1.35, 0.4);
+        const kh = seg(k, 0.82, 1);
+        if (kh <= 0) return;
+        const ang = Math.atan2(p3[1] - p2[1], p3[0] - p2[0]);
+        const L = 13;
+        for (const s of [-1, 1]) {
+          const a = ang + Math.PI - s * 0.5;
+          drawOn([[p3[0], p3[1]], [p3[0] + L * Math.cos(a), p3[1] + L * Math.sin(a)]], kh, "charcoal", INK, 1.25);
+        }
+      }
+      function at(cx, cy, rot, fn) { brush.push(); brush.translate(cx, cy); brush.rotate(rot); fn(); brush.pop(); }
+      function headAndShoulders(fx, fy, k, name, wt) {
+        const kh = seg(k, 0, 0.55), ks = seg(k, 0.4, 1);
+        if (kh > 0.01) { brush.set(name, INK, wt); brush.arc(fx, fy - 9, 7, -1.6, -1.6 + Math.PI * 1.97 * kh); }
+        drawOn([[fx - 15, fy + 13], [fx - 12, fy + 4], [fx - 6, fy], [fx + 6, fy], [fx + 12, fy + 4], [fx + 15, fy + 13]], ks, name, INK, wt, 0.6);
+      }
+
+      // ---------- layout (brush units; px = units x 2). Safe band 84..665 ----------
+      const ROW = [222, 346, 470, 594];
+      const XL = 145, XR = 395;
+
+      function renderAt(t) {
+        brush.seed(SEED); brush.noiseSeed(SEED);
+        brush.clear(PAPER);
+        brush.push();
+        brush.translate(-W / 2, -H / 2);
+
+        // --- washes first in paint order (under every line), but timed just after the outline starts:
+        //     the pen leads, the paint follows ---
+        sd(1);  wash(blobPts(XL + 6, ROW[0] + 6, 86, 54, 1.1), BLUE, 105 * out(seg(t, 0.55, 1.05)));
+        sd(2);  wash(blobPts(XR - 4, ROW[1] + 4, 82, 58, 2.7), OCHRE, 120 * out(seg(t, 2.05, 2.5)));
+        sd(3);  wash(blobPts(XL + 4, ROW[2] + 2, 94, 54, 4.2), BLUE, 95 * out(seg(t, 3.65, 4.1)));
+        sd(4);  wash(blobPts(XR, ROW[3], 62, 64, 5.9), OCHRE, 125 * out(seg(t, 5.3, 5.75)));
+
+        // --- title underline: red marker, hand wobble ---
+        sd(5);  drawOn(wobbleLine(150, 390, 161, 1.6, 0.4), io(seg(t, 0.35, 0.75)), "redmarker", RED, 0.75, 0.5);
+
+        // ================= STEP 1: raw clip = film strip =================
+        at(XL, ROW[0], -0.05, () => {
+          sd(10); hatchReveal(-75, -27, 150, 54, io(seg(t, 1.1, 1.5)), "HB", 0.7, 6, 0.75);
+          sd(11); drawOn(rectPts(-75, -40, 150, 80), io(seg(t, 0.35, 0.95)), "pen", INK, 1.25);
+          sd(12); drawOn([[-75, -27], [75, -27]], io(seg(t, 0.8, 1.05)), "pen", INK, 0.9);
+          sd(13); drawOn([[75, 27], [-75, 27]], io(seg(t, 0.85, 1.1)), "pen", INK, 0.9);
+          sd(14); drawOn([[-25, -27], [-25, 27]], io(seg(t, 0.95, 1.15)), "pen", INK, 0.9);
+          sd(15); drawOn([[25, -27], [25, 27]], io(seg(t, 1.0, 1.2)), "pen", INK, 0.9);
+          // sprocket holes pop in one by one, top and bottom
+          const ks = seg(t, 1.0, 1.4);
+          for (let j = 0; j < 8; j++) {
+            if (ks <= j / 8) continue;
+            const x = -68 + j * 18;
+            sd(20 + j); brush.set("rotring", INK, 0.8); brush.rect(x, -36, 8, 6);
+            sd(30 + j); brush.set("rotring", INK, 0.8); brush.rect(x, 30, 8, 6);
+          }
+          for (let f = 0; f < 3; f++) { sd(40 + f); headAndShoulders(-50 + f * 50, 6, io(seg(t, 1.15 + f * 0.1, 1.5 + f * 0.1)), "2B", 1.3); }
+        });
+
+        // arrow 1 -> 2
+        sd(50); arrow([226, 258], [288, 256], [320, 268], [338, 294], io(seg(t, 1.6, 2.0)));
+
+        // ================= STEP 2: transcript = page of words =================
+        at(XR, ROW[1], 0.04, () => {
+          // red marker highlight under one line (the words Claude keeps)
+          sd(60); drawOn(wobbleLine(-34, 6, 0, 0.6, 1.0), io(seg(t, 3.0, 3.3)), "marker", RED, 2.4, 0.5);
+          sd(61); drawOn([[-45, -44], [28, -44], [48, -24], [48, 44], [-45, 44], [-45, -43.5]], io(seg(t, 1.9, 2.4)), "pen", INK, 1.25);
+          sd(62); drawOn([[28, -44], [28, -24], [48, -24]], io(seg(t, 2.35, 2.5)), "pen", INK, 0.9);
+          const ends = [16, 34, 26, 36, 8];
+          for (let i = 0; i < 5; i++) {
+            sd(63 + i); drawOn(wobbleLine(-34, ends[i], -26 + i * 13, 0.9, i * 1.7), io(seg(t, 2.45 + i * 0.1, 2.67 + i * 0.1)), "2B", INK, 1.3, 0.5);
+          }
+          // speech bubble, upper right: the voice being read
+          const kb = io(seg(t, 2.6, 2.9));
+          if (kb > 0.01) { sd(70); brush.set("pen", INK, 1.0); brush.arc(70, -36, 15, 2.2, 2.2 + Math.PI * 1.75 * kb); }
+          sd(71); drawOn([[59, -26], [52, -16], [63, -23]], seg(t, 2.85, 2.97), "pen", INK, 1.0);
+          for (let d = 0; d < 3; d++) {
+            if (t < 2.95 + d * 0.05) continue;
+            sd(72 + d); brush.set("pen", INK, 1.2); brush.arc(63 + d * 7, -36, 1.4, 0, Math.PI * 1.9);
+          }
+        });
+
+        // arrow 2 -> 3
+        sd(80); arrow([346, 394], [300, 404], [252, 404], [230, 426], io(seg(t, 3.2, 3.6)));
+
+        // ================= STEP 3: the plan = storyboard =================
+        at(XL, ROW[2], -0.03, () => {
+          const X0 = [-72, -22, 28];
+          // frame 2 = the key shot, red pastel mass behind its outline
+          sd(90); massReveal(rectPts(-19, -33, 38, 32), [-19, -33, 38, 32], io(seg(t, 4.0, 4.4)), "crayon", RED);
+          for (let i = 0; i < 3; i++) { sd(91 + i); drawOn(rectPts(X0[i], -36, 44, 38), io(seg(t, 3.5 + i * 0.12, 3.8 + i * 0.12)), "charcoal", INK, 1.05); }
+          sd(95); headAndShoulders(-50, -14, io(seg(t, 3.85, 4.15)), "2B", 1.15);
+          // frame 3: a quick star (the payoff shot)
+          const star = [];
+          for (let i = 0; i <= 5; i++) { const a = -Math.PI / 2 + i * (Math.PI * 4 / 5); star.push([50 + 12 * Math.cos(a), -17 + 12 * Math.sin(a)]); }
+          sd(96); drawOn(star, io(seg(t, 4.15, 4.45)), "pen", INK, 1.1);
+          // notes under each frame
+          for (let i = 0; i < 3; i++) {
+            sd(97 + i * 2); drawOn([[X0[i] + 2, 12], [X0[i] + 40, 12]], io(seg(t, 4.35 + i * 0.1, 4.5 + i * 0.1)), "HB", INK, 0.95);
+            sd(98 + i * 2); drawOn([[X0[i] + 2, 22], [X0[i] + 28, 22]], io(seg(t, 4.42 + i * 0.1, 4.57 + i * 0.1)), "HB", INK, 0.95);
+          }
+        });
+
+        // arrow 3 -> 4
+        sd(110); arrow([226, 506], [288, 504], [322, 516], [342, 542], io(seg(t, 4.8, 5.2)));
+
+        // ================= STEP 4: final reel = phone with play =================
+        at(XR, ROW[3], 0.03, () => {
+          const tri = [[-11, -16], [16, -1], [-11, 14]];
+          sd(120); massReveal(tri, [-11, -16, 27, 30], io(seg(t, 6.05, 6.45)), "crayon", RED);
+          sd(121); drawOn(roundRectPts(-30, -48, 60, 96, 10), io(seg(t, 5.1, 5.7)), "pen", INK, 1.4);
+          sd(122); drawOn(rectPts(-24, -37, 48, 70), io(seg(t, 5.55, 5.9)), "rotring", INK, 0.8);
+          sd(123); drawOn([[-7, -43], [7, -43]], io(seg(t, 5.8, 5.95)), "pen", INK, 1.1);
+          const kd = io(seg(t, 5.82, 5.98));
+          if (kd > 0.01) { sd(124); brush.set("pen", INK, 1.0); brush.arc(0, 41, 3, 0, Math.PI * 1.95 * kd); }
+          sd(125); drawOn([...tri, [-11, -15.5]], io(seg(t, 5.9, 6.15)), "pen", INK, 1.2);
+          sd(126); drawOn([[-17, 25], [17, 25]], io(seg(t, 6.3, 6.5)), "HB", INK, 1.0);
+
+          // ---- payoff: red marker oval around the phone, then a check ----
+          const ko = io(seg(t, 6.6, 7.25));
+          if (ko > 0) {
+            const ov = [];
+            for (let i = 0; i <= 64; i++) {
+              const a = -2.3 + (i / 64) * Math.PI * 2.12;
+              const f = 1 + 0.035 * Math.sin(2 * a + 0.7) + 0.02 * (i / 64);
+              ov.push([54 * f * Math.cos(a), 66 * f * Math.sin(a)]);
+            }
+            sd(130); drawOn(ov, ko, "redmarker", RED, 1, 0.5);
+          }
+          sd(131); drawOn([[62, -4], [74, 12], [102, -30]], io(seg(t, 7.25, 7.55)), "redmarker", RED, 1.1, 0.2);
+        });
+
+        brush.pop();
+        brush.render();
+      }
+
+      window.addEventListener("hf-seek", (e) => renderAt(e.detail.time));
+      renderAt(0);
+
+      // ================= GSAP: handwritten labels on top =================
+      const tl = gsap.timeline({ paused: true });
+      // write(): the mask edge travels at roughly hand speed (~0.045 s a letter),
+      // slow in + slow out like a pen starting and lifting
+      const write = (sel, at, chars) => tl.fromTo(sel, { "--w": "0%" },
+        { "--w": "112%", duration: Math.min(0.75, 0.12 + chars * 0.032), ease: "power1.inOut" }, at);
+
+      write("#titleKick", 0.02, 26);
+      write("#titleBig", 0.32, 11);
+
+      write("#lab1t", 0.9, 10);  write("#lab1s", 1.12, 16);
+      write("#lab2t", 2.3, 13);  write("#lab2s", 2.55, 23);
+      write("#lab3t", 3.85, 11); write("#lab3s", 4.08, 21);
+      write("#lab4t", 5.5, 13);  write("#lab4s", 5.75, 23);
+
+      // payoff: the title fades off, the offer is written in its place
+      tl.to("#title .line", { opacity: 0, y: -14, duration: 0.3, ease: "power2.in", stagger: 0.04 }, 6.85);
+      tl.set("#cta .line", { opacity: 1 }, 7.08);
+      write("#ctaKick", 7.1, 19);
+      write("#ctaBig", 7.3, 10);
+
+      window.__timelines["main"] = tl;
+      tl.seek(0);
+    </script>
+  </body>
+</html>

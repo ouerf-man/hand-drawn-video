@@ -1,0 +1,3 @@
+# Python 3.9-3.12 on Windows, macOS or Linux.
+# MediaPipe brings its own OpenCV and NumPy.
+mediapipe>=0.10.14

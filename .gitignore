@@ -1,0 +1,7 @@
+# p5.brush is downloaded at first use (scripts/brushlib.py), never committed
+kit/.cache/
+__pycache__/
+*.pyc
+.DS_Store
+node_modules/
+renders/

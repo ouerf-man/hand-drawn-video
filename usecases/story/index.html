@@ -1,0 +1,631 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1080, height=1920" />
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.15.0/dist/gsap.min.js"></script>
+    <script src="assets/vendor/brush.js"></script>
+    <style>
+      :root {
+        --paper: #f4efe4;
+        --ink: #23201c;
+        --red: #e0242f;
+      }
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { width: 1080px; height: 1920px; overflow: hidden; background: var(--paper); }
+      #root { position: relative; width: 100%; height: 100%; background: var(--paper); }
+      #paper { position: absolute; inset: 0; }
+      #paper canvas { display: block; width: 1080px !important; height: 1920px !important; }
+      @font-face {
+        /* handwriting: Caveat (SIL OFL 1.1), see assets/fonts/OFL-Caveat.txt */
+        font-family: "Caveat";
+        src: url("assets/fonts/caveat-latin-700.woff2") format("woff2");
+        font-weight: 400 700; font-display: block;
+      }
+      .line { position: absolute; left: 0; right: 0; top: 200px; text-align: center; }
+      .line span {
+        display: inline-block;
+        font-family: "Caveat", cursive;
+        font-weight: 700;
+        font-size: 132px;
+        line-height: 0.92;
+        color: var(--ink);
+      }
+      #t4 span { font-size: 112px; }
+      #t4 .red { color: var(--red); }
+    </style>
+  </head>
+  <body>
+    <div id="root" data-composition-id="main" data-start="0" data-duration="9.4" data-width="1080" data-height="1920">
+      <!-- p5.brush draws the whole film into this host on every hf-seek -->
+      <div id="paper" class="clip" data-start="0" data-duration="9.4" data-track-index="0" data-track-kind="graphics"></div>
+      <!-- one short line per beat -->
+      <div id="t2" class="line clip" data-start="1.45" data-duration="2.85" data-track-index="1" data-track-kind="graphics">
+        <span id="t2s">first try.</span>
+      </div>
+      <div id="t3" class="line clip" data-start="4.45" data-duration="2.3" data-track-index="1" data-track-kind="graphics">
+        <span id="t3s">try again.</span>
+      </div>
+      <div id="t4" class="line clip" data-start="6.75" data-duration="2.65" data-track-index="1" data-track-kind="graphics">
+        <span id="t4a">drawn by code,</span><br />
+        <span id="t4b" class="red">frame by frame.</span>
+      </div>
+    </div>
+
+    <script>
+      // =====================================================================
+      //  A doodle person tries to draw — p5.brush, every frame a pure function of time
+      // =====================================================================
+      const W = 540, H = 960;                 // brush units; pixelDensity 2 -> 1080x1920
+      const PAPER = "#f4efe4", INK = "#23201c", RED = "#e0242f";
+      const BLUE = "#3f6f9e", OCHRE = "#e0a234", GREEN = "#6f9a48";
+      const SEED = 23;
+
+      brush.createCanvas(W, H, { parent: document.getElementById("paper"), pixelDensity: 2 });
+      brush.scaleBrushes(2.6);
+      brush.angleMode(brush.RADIANS);
+
+      // ---------- tiny math kit ----------
+      const clamp = (v, a = 0, b = 1) => Math.max(a, Math.min(b, v));
+      const seg = (t, a, b) => clamp((t - a) / (b - a));
+      const lerp = (a, b, k) => a + (b - a) * k;
+      const E = {
+        lin: (k) => k,
+        out: (k) => 1 - Math.pow(1 - k, 3),
+        in: (k) => k * k * k,
+        io: (k) => (k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2),
+        back: (k) => { const c = 1.9; return 1 + (c + 1) * Math.pow(k - 1, 3) + c * Math.pow(k - 1, 2); },
+      };
+      // keyed values: [[t, v, ease?], ...] — ease belongs to the segment arriving at that key
+      function kf(t, keys) {
+        if (t <= keys[0][0]) return keys[0][1];
+        for (let i = 1; i < keys.length; i++) {
+          if (t <= keys[i][0]) {
+            const [t0, v0] = keys[i - 1], [t1, v1, e] = keys[i];
+            return lerp(v0, v1, (E[e || "io"])((t - t0) / (t1 - t0)));
+          }
+        }
+        return keys[keys.length - 1][1];
+      }
+      // independent seed per element, so one element growing never re-rolls another's texture
+      function sd(n) { brush.seed(SEED + n * 101); brush.noiseSeed(SEED + n * 101); }
+      // resample a polyline to ~step spacing (smooth draw-on)
+      function dense(pts, step = 4) {
+        const out = [];
+        for (let i = 0; i < pts.length - 1; i++) {
+          const a = pts[i], b = pts[i + 1];
+          const n = Math.max(1, Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) / step));
+          for (let j = 0; j < n; j++) out.push([lerp(a[0], b[0], j / n), lerp(a[1], b[1], j / n), lerp(a[2] ?? 1, b[2] ?? 1, j / n)]);
+        }
+        const l = pts[pts.length - 1];
+        out.push([l[0], l[1], l[2] ?? 1]);
+        return out;
+      }
+      // the first k of a dense path, plus its head point
+      function partial(pts, k) {
+        const f = clamp(k) * (pts.length - 1);
+        const i = Math.floor(f), r = f - i;
+        const out = pts.slice(0, i + 1);
+        if (i < pts.length - 1) {
+          const a = pts[i], b = pts[i + 1];
+          out.push([lerp(a[0], b[0], r), lerp(a[1], b[1], r), a[2]]);
+        }
+        return out;
+      }
+      function drawPath(pts, k, name, color, weight, curv = 0.4) {
+        if (k <= 0) return;
+        const p = partial(pts, k);
+        if (p.length < 2) return;
+        brush.set(name, color, weight);
+        brush.spline(p, curv);
+      }
+
+      // ---------- the page ----------
+      const G = 640;                                    // ground line y
+      const F = { x1: 182, y1: 228, x2: 452, y2: 500 }; // the frame the person draws
+      const SC = [316, 362];                            // the failed sun's centre
+      const SUN = [384, 304];
+
+      // ---------- strokes (geometry built once) ----------
+      // the failed "sun": a lumpy, over-shot circle and three crooked rays
+      const scribble = (() => {
+        const pts = [];
+        for (let i = 0; i <= 80; i++) {
+          const u = i / 80, a = -2.2 + u * Math.PI * 2 * 1.14;
+          const r = 62 * (1 + 0.11 * Math.sin(3 * a + 0.5) + 0.06 * Math.sin(7 * a)) + u * 12;
+          pts.push([SC[0] + 6 * u + r * Math.cos(a), SC[1] - 5 * u + r * Math.sin(a), 1]);
+        }
+        return dense(pts, 3);
+      })();
+      const rays = [-0.5, -1.35, -2.35].map((a, i) => {
+        const r0 = 82 + i * 3, r1 = 120 + i * 6, kink = i % 2 ? 0.14 : -0.17;
+        return dense([
+          [SC[0] + r0 * Math.cos(a), SC[1] + r0 * Math.sin(a)],
+          [SC[0] + (r0 + r1) / 2 * Math.cos(a + kink), SC[1] + (r0 + r1) / 2 * Math.sin(a + kink)],
+          [SC[0] + r1 * Math.cos(a - kink), SC[1] + r1 * Math.sin(a - kink)],
+        ], 3);
+      });
+      const crossA = dense([[244, 286], [318, 366], [392, 446]], 4);
+      const crossB = dense([[394, 284], [322, 362], [246, 444]], 4);
+      // the frame: four sides, corners overshoot like a quick hand
+      const frameSides = [
+        dense([[F.x1, F.y2 + 4], [F.x1 - 2, (F.y1 + F.y2) / 2], [F.x1 + 1, F.y1 - 8]], 4),
+        dense([[F.x1 - 8, F.y1], [(F.x1 + F.x2) / 2, F.y1 - 2], [F.x2 + 8, F.y1 + 1]], 4),
+        dense([[F.x2, F.y1 - 6], [F.x2 + 2, (F.y1 + F.y2) / 2], [F.x2 - 1, F.y2 + 8]], 4),
+        dense([[F.x2 + 7, F.y2], [(F.x1 + F.x2) / 2, F.y2 + 2], [F.x1 - 8, F.y2 - 1]], 4),
+      ];
+      const groundLine = dense([[34, G + 1], [180, G - 1], [330, G + 1], [506, G]], 6);
+
+      // ---------- the pen's timeline: what the pencil tip does, beat by beat ----------
+      // strokes the pencil draws; the tip rides the head of the active one
+      const PEN = [
+        { pts: scribble, t0: 1.75, t1: 2.6, name: "2B", color: INK, w: 1.7, id: 20, grp: "fail" },
+        { pts: rays[0], t0: 2.65, t1: 2.73, name: "2B", color: INK, w: 1.6, id: 21, grp: "fail" },
+        { pts: rays[1], t0: 2.77, t1: 2.85, name: "2B", color: INK, w: 1.6, id: 22, grp: "fail" },
+        { pts: rays[2], t0: 2.89, t1: 2.97, name: "2B", color: INK, w: 1.6, id: 23, grp: "fail" },
+        { pts: crossA, t0: 3.22, t1: 3.36, name: "marker", color: RED, w: 1.9, id: 24, grp: "fail" },
+        { pts: crossB, t0: 3.42, t1: 3.56, name: "marker", color: RED, w: 1.9, id: 25, grp: "fail" },
+        { pts: frameSides[0], t0: 4.92, t1: 5.14, name: "pen", color: INK, w: 1.6, id: 30, grp: "frame" },
+        { pts: frameSides[1], t0: 5.19, t1: 5.41, name: "pen", color: INK, w: 1.6, id: 31, grp: "frame" },
+        { pts: frameSides[2], t0: 5.46, t1: 5.66, name: "pen", color: INK, w: 1.6, id: 32, grp: "frame" },
+        { pts: frameSides[3], t0: 5.71, t1: 5.93, name: "pen", color: INK, w: 1.6, id: 33, grp: "frame" },
+      ];
+      const PENCIL_GROUND = { tip: [176, G - 5], ang: 0 };   // lying on the page, tip left
+
+      // ---------- the person's rig: every parameter is a keyed curve over time ----------
+      function rig(t) {
+        const r = {};
+        r.x = kf(t, [[0, 112], [4.7, 112], [4.95, 122], [6.6, 122], [7.1, 110]]);
+        // squash/stretch: anticipation before every action, overshoot after
+        r.sq = kf(t, [
+          [0, 1], [1.08, 1], [1.2, 0.9], [1.38, 1.12, "out"], [1.6, 1.0],
+          [1.62, 0.95], [1.78, 1.04, "out"], [2.95, 1.04], [3.15, 1.0],
+          [3.6, 1.0], [3.85, 0.86, "out"], [4.4, 0.86], [4.58, 0.8], [4.76, 1.14, "out"], [4.95, 1.02],
+          [5.95, 1.02], [6.2, 1.08, "out"], [6.65, 1.06], [6.9, 1.0], [7.2, 0.88], [7.45, 0.93, "out"], [9, 0.93],
+        ]);
+        r.lookX = kf(t, [
+          [0, 0], [0.95, 0], [1.02, 0.9], [1.6, 0.9], [1.7, 0.6],
+          [3.0, 0.6], [3.6, 0.7], [3.85, 0.9], [4.35, 1], [4.5, 0], [4.7, 0.6], [6.6, 0.7], [7.0, 0.2], [7.4, 0],
+        ]);
+        r.lookY = kf(t, [
+          [0, 0], [0.95, 0], [1.02, 0.8], [1.25, 0.8], [1.6, -0.4], [3.0, -0.6], [3.6, -0.6], [3.85, 0.8], [4.35, 0.8],
+          [4.5, 0], [4.7, -0.8], [5.95, -0.8], [6.15, -0.6], [7.0, -0.3], [7.4, 0],
+        ]);
+        // eyelids: 0 open, 1 shut. happy = closed "smile" eyes at the end
+        r.blink = Math.max(
+          t > 4.38 && t < 4.6 ? kf(t, [[4.38, 0], [4.45, 1, "in"], [4.6, 0, "out"]]) : 0,
+          t > 6.5 && t < 6.72 ? kf(t, [[6.5, 0], [6.57, 1, "in"], [6.72, 0, "out"]]) : 0
+        );
+        r.happyEyes = seg(t, 7.35, 7.5);
+        r.eyeScale = kf(t, [[0, 0], [0.75, 0], [0.95, 1, "back"], [6.05, 1], [6.25, 1.25, "back"], [6.7, 1.15], [7.1, 1]]);
+        r.mood = kf(t, [  // -1 frown .. 1 smile
+          [0, 0.15], [1.3, 0.15], [1.5, 0.7], [1.75, 0.2], [3.0, 0.1], [3.2, -0.5], [3.6, -0.6], [3.85, -1], [4.5, -0.6],
+          [4.7, 0.0], [5.95, 0.0], [6.3, 0.7], [6.8, 0.9], [7.4, 1],
+        ]);
+        r.brow = kf(t, [  // -1 worried .. 1 determined
+          [0, 0], [3.0, 0], [3.25, -0.8], [4.4, -1], [4.6, 0.2], [4.8, 1, "out"], [5.9, 1], [6.15, 0],
+        ]);
+        r.wow = kf(t, [[0, 0], [6.05, 0], [6.15, 1], [6.7, 1], [6.85, 0]]);
+        return r;
+      }
+
+      // pencil tip position + whether the person holds it
+      function pencilAt(t) {
+        // 1. strokes
+        for (const s of PEN) {
+          if (t >= s.t0 && t <= s.t1) {
+            const p = partial(s.pts, (t - s.t0) / (s.t1 - s.t0));
+            return { tip: p[p.length - 1], held: 1 };
+          }
+        }
+        // 2. poses between strokes
+        const READY = [180, 546], REST = [196, 604];
+        const sEnd = (i) => PEN[i].pts[PEN[i].pts.length - 1], sStart = (i) => PEN[i].pts[0];
+        const ballPos = crumple(t).c;
+        const hop = (a, b, k, lift = 14) => {
+          const e = E.io(k);
+          return [lerp(a[0], b[0], e), lerp(a[1], b[1], e) - Math.sin(Math.PI * e) * lift];
+        };
+        if (t < 1.12) return { tip: PENCIL_GROUND.tip, held: 0 };
+        if (t < 1.4) return { tip: hop(PENCIL_GROUND.tip, READY, seg(t, 1.12, 1.4), 30), held: 1 };
+        if (t < 1.55) return { tip: READY, held: 1 };
+        if (t < 1.75) return { tip: hop(READY, sStart(0), seg(t, 1.55, 1.75), 20), held: 1 };
+        for (let i = 0; i < PEN.length - 1; i++) {
+          if (t > PEN[i].t1 && t < PEN[i + 1].t0) {
+            if (i === 3) { // after the rays: step back, look, then cross it out
+              if (t < 3.08) return { tip: hop(sEnd(3), [230, 470], seg(t, 2.97, 3.08), 6), held: 1 };
+              if (t < 3.12) return { tip: [230, 470], held: 1 };
+              return { tip: hop([230, 470], sStart(4), seg(t, 3.12, 3.22), 10), held: 1 };
+            }
+            if (i === 5) { // after the X: arm drops, sad; then lifts for the frame
+              if (t < 3.85) return { tip: hop(sEnd(5), REST, seg(t, 3.56, 3.85), -10), held: 1 };
+              if (t < 4.7) return { tip: REST, held: 1 };
+              return { tip: hop(REST, sStart(6), seg(t, 4.7, 4.92), 20), held: 1 };
+            }
+            return { tip: hop(sEnd(i), sStart(i + 1), seg(t, PEN[i].t1, PEN[i + 1].t0), 8), held: 1 };
+          }
+        }
+        // after the frame: lower the pencil, then lay it down on the page
+        const last = sEnd(PEN.length - 1);
+        if (t < 6.25) return { tip: hop(last, REST, seg(t, 5.93, 6.25), 10), held: 1 };
+        if (t < 6.75) return { tip: REST, held: 1 };
+        if (t < 7.05) return { tip: hop(REST, [194, G - 5], seg(t, 6.75, 7.05), 12), held: 1 - seg(t, 6.98, 7.05) };
+        return { tip: [194, G - 5], held: 0 };
+      }
+
+      // the failed drawing: crumples into a ball, drops, bounces, rolls off the page
+      function crumple(t) {
+        const s = kf(t, [[0, 1], [3.6, 1], [3.66, 1.06, "out"], [3.85, 0.17, "in"]]);
+        const fall = seg(t, 3.85, 4.08), bounce = seg(t, 4.08, 4.22), roll = seg(t, 4.2, 4.7);
+        const R = 64 * 0.17;
+        let cy = lerp(SC[1], G - R - 1, E.in(fall));
+        cy -= Math.sin(Math.PI * bounce) * 22 * (fall >= 1 ? 1 : 0);
+        const cx = SC[0] + 30 * E.in(fall) + 20 * bounce + 330 * E.in(roll);
+        return { s, c: [cx, cy], rot: (cx - SC[0]) / R * 0.35, jit: 1 - s };
+      }
+      function crumplePts(pts, cr, id) {
+        if (cr.s === 1 && cr.c[0] === SC[0] && cr.c[1] === SC[1]) return pts;
+        const cs = Math.cos(cr.rot), sn = Math.sin(cr.rot);
+        return pts.map((p, i) => {
+          let dx = (p[0] - SC[0]) * cr.s, dy = (p[1] - SC[1]) * cr.s;
+          // fixed (seed-free) crinkle so the ball keeps its shape while rolling
+          dx += Math.sin(i * 1.7 + id) * 5 * cr.jit; dy += Math.cos(i * 2.3 + id * 0.7) * 5 * cr.jit;
+          return [cr.c[0] + dx * cs - dy * sn, cr.c[1] + dx * sn + dy * cs, p[2]];
+        });
+      }
+
+      // ---------- the person: a doodle, drawn in pen with one watercolour shirt ----------
+      function ellipse(x, y, rx, ry, n = 16) {
+        const p = [];
+        for (let i = 0; i < n; i++) { const a = (i / n) * Math.PI * 2; p.push([x + rx * Math.cos(a), y + ry * Math.sin(a)]); }
+        return p;
+      }
+
+      function drawPencil(tip, ang, k = 1) {
+        if (k <= 0) return;
+        const u = [Math.cos(ang), Math.sin(ang)], n = [-u[1], u[0]];
+        const P = (d, o) => [tip[0] + u[0] * d + n[0] * o, tip[1] + u[1] * d + n[1] * o];
+        const L = 34, wd = 3.4;
+        const body = [P(8, -wd), P(L, -wd), P(L, wd), P(8, wd)];
+        brush.noStroke();
+        brush.wash(OCHRE, 235 * k);
+        brush.polygon(body);
+        brush.noWash();
+        brush.wash(INK, 230 * k);
+        brush.polygon([tip, P(3.2, -1.3), P(3.2, 1.3)]);
+        brush.noWash();
+        brush.set("pen", INK, 0.7);
+        const outline = [tip, P(8, -wd), P(L, -wd), P(L, wd), P(8, wd), tip];
+        brush.spline(partial(dense(outline, 2), k), 0);
+      }
+
+      const HR = 27;            // head radius
+      // skeleton from the rig: squash bends the knees, stretch lengthens the torso, lean moves the shoulders
+      function bodyState(t) {
+        const r = rig(t);
+        const pen = pencilAt(t);
+        const reach = pen.held ? clamp((pen.tip[0] - r.x) * 0.06, -6, 14) : 0;
+        const lift = pen.held ? clamp((560 - pen.tip[1]) / 1400, 0, 0.16) : 0;
+        const sad = clamp(-r.mood) * -3;
+        const lean = reach + sad + kf(t, [[0, 0], [2.97, 0], [3.08, -6], [3.14, -6], [3.24, 0], [7.1, 0], [7.4, -2]]);
+        const sq = r.sq + lift;
+        const legH = 62 * (sq < 1 ? 1 - (1 - sq) * 1.3 : 1);
+        const hipY = G - legH;
+        const torsoH = 56 * (sq > 1 ? sq : 1 - (1 - sq) * 0.25);
+        const wide = sq < 1 ? 1 + (1 - sq) * 0.6 : 1 / Math.sqrt(sq);
+        return { r, pen, lean, legH, hipY, wide, hx: r.x + lean * 0.15, sx: r.x + lean, sy: hipY - torsoH };
+      }
+
+      function drawPerson(t) {
+        const B = bodyState(t);
+        const { r, pen, lean } = B;
+        // follow-through: the head trails the shoulders, the hair trails the head
+        const Bl = bodyState(t - 0.08), Bh = bodyState(t - 0.16);
+        const droop = clamp(-r.mood);
+        const hcx = B.sx * 0.6 + Bl.sx * 0.4;
+        const hcy = B.sy * 0.55 + Bl.sy * 0.45 - HR - 1 + droop * 3;
+        const sway = clamp((B.lean - Bh.lean) * -0.9, -7, 7);
+        const lift = clamp((Bh.sy - B.sy) * 0.6, -5, 6); // hair lifts when the body drops fast
+
+        // legs
+        const kLeg = seg(t, 0.55, 0.75);
+        if (kLeg > 0) {
+          sd(40);
+          [-1, 1].forEach((sgn) => {
+            const hip = [B.hx + sgn * 9 * B.wide, B.hipY], foot = [r.x + sgn * 12, G - 1];
+            const half = B.legH / 2, out = Math.sqrt(Math.max(0, 31.5 * 31.5 - half * half)) * 0.8;
+            const knee = [(hip[0] + foot[0]) / 2 + sgn * (2 + out), (hip[1] + foot[1]) / 2];
+            drawPath(dense([hip, knee, foot, [foot[0] + sgn * 9, G - 1]], 2), kLeg, "pen", INK, 1.4, 0.35);
+          });
+        }
+
+        // shirt: pen outline draws on, then the watercolour accent soaks in
+        const w = B.wide;
+        const shirt = [
+          [B.sx - 20 * w, B.sy + 3], [B.sx, B.sy - 1], [B.sx + 20 * w, B.sy + 3],
+          [B.hx + 17 * w, B.hipY + 1], [B.hx - 17 * w, B.hipY + 1],
+        ];
+        const kShirt = E.io(seg(t, 0.35, 0.65));
+        const kFill = E.out(seg(t, 0.55, 0.9));
+        sd(41);
+        if (kShirt > 0 && kShirt < 1) drawPath(dense(shirt.concat([shirt[0]]), 3), kShirt, "pen", INK, 1.3, 0.25);
+        if (kShirt >= 1) {
+          if (kFill > 0) {
+            brush.fill(BLUE, 165 * kFill);
+            brush.fillBleed(0.12);
+            brush.fillTexture(0.25, 0.45, false, 0.1);
+          } else brush.noFill();
+          brush.set("pen", INK, 1.3);
+          brush.beginShape(0.25);
+          shirt.forEach((p) => brush.vertex(p[0], p[1]));
+          brush.endShape(true);
+          brush.noFill();
+        }
+
+        // head: one pen loop, then a few hair strokes
+        const kHead = E.io(seg(t, 0.15, 0.45));
+        if (kHead > 0) {
+          sd(45);
+          const loop = ellipse(hcx, hcy, HR, HR * 1.06, 20).concat([[hcx + HR, hcy]]);
+          drawPath(dense(loop.slice(5).concat(loop.slice(0, 6)), 2.5), kHead, "pen", INK, 1.3, 0.5);
+        }
+        [-2.45, -2.0, -1.6, -1.2].forEach((a, i) => {
+          const k = E.out(seg(t, 0.4 + i * 0.04, 0.52 + i * 0.04));
+          if (k <= 0) return;
+          sd(46 + i);
+          const r0 = HR - 1, r1 = HR + 10 + (i % 2) * 4;
+          const base = [hcx + r0 * Math.cos(a), hcy + r0 * Math.sin(a)];
+          const tip = [hcx + r1 * Math.cos(a + 0.35) + sway, hcy + r1 * Math.sin(a + 0.35) - lift];
+          const mid = [(base[0] + tip[0]) / 2 - 2, (base[1] + tip[1]) / 2 - 2];
+          drawPath(dense([base, mid, tip], 2), k, "2B", INK, 1.2, 0.6);
+        });
+
+        // face: dot eyes, brows, one mouth line; features slide toward where they look
+        const es = r.eyeScale;
+        if (es > 0.01) {
+          sd(42);
+          const fx = hcx + r.lookX * 5, fy = hcy + 1 + r.lookY * 4;
+          [-1, 1].forEach((sgn) => {
+            const ex = fx + sgn * 9;
+            if (r.happyEyes > 0.5) {
+              brush.set("pen", INK, 1.0);
+              brush.arc(ex, fy + 2, 4.6, Math.PI + 0.3, Math.PI * 2 - 0.3);
+              return;
+            }
+            const open = 1 - r.blink;
+            if (open > 0.2) {
+              brush.noStroke();
+              brush.wash(INK, 255);
+              brush.polygon(ellipse(ex, fy, 3.0 * es, 3.5 * es * open, 10));
+              brush.noWash();
+            } else {
+              brush.set("pen", INK, 0.9);
+              brush.line(ex - 4, fy, ex + 4, fy);
+            }
+          });
+          if (Math.abs(r.brow) > 0.05) {
+            brush.set("pen", INK, 0.9);
+            [-1, 1].forEach((sgn) => {
+              const ex = fx + sgn * 9, L = 6.5 * Math.min(1, Math.abs(r.brow) * 2);
+              const inner = -8 + 3 * r.brow, outer = -9 - 2 * r.brow;
+              brush.line(ex - sgn * L * 0.4, fy + inner, ex + sgn * L, fy + outer);
+            });
+          }
+          const mx = fx + r.lookX * 0.5, my = fy + 12;
+          if (r.wow > 0.5) {
+            brush.noStroke();
+            brush.wash(INK, 255);
+            brush.polygon(ellipse(mx, my + 1, 2.8 * r.wow, 3.6 * r.wow, 10));
+            brush.noWash();
+          } else {
+            brush.set("pen", INK, 0.9);
+            brush.spline([[mx - 6.5, my], [mx, my + 4.5 * r.mood], [mx + 6.5, my]], 0.6);
+          }
+        }
+
+        // arms (rubber hose) + pencil
+        const kArm = seg(t, 0.8, 1.0);
+        if (kArm > 0) {
+          sd(43);
+          const sh = [B.sx + 17 * w, B.sy + 7], shL = [B.sx - 17 * w, B.sy + 7];
+          let grip, ang;
+          if (pen.held > 0) {
+            const dx = sh[0] - pen.tip[0], dy = sh[1] - pen.tip[1], d = Math.hypot(dx, dy) || 1;
+            ang = Math.atan2(dy, dx);
+            grip = [pen.tip[0] + (dx / d) * 22, pen.tip[1] + (dy / d) * 22];
+          } else {
+            grip = [sh[0] + 9, sh[1] + 40];
+          }
+          const reachArm = (a, h, sag) => {
+            const mx = (a[0] + h[0]) / 2, my = (a[1] + h[1]) / 2;
+            const dx = h[0] - a[0], dy = h[1] - a[1], d = Math.hypot(dx, dy) || 1;
+            let nx = -dy / d, ny = dx / d;
+            if (ny < 0) { nx = -nx; ny = -ny; } // elbow sags down
+            return dense([a, [mx + nx * sag, my + ny * sag], h], 3);
+          };
+          drawPath(reachArm(sh, grip, 6 + Math.min(14, Math.hypot(grip[0] - sh[0], grip[1] - sh[1]) * 0.04)), kArm, "pen", INK, 1.3, 0.6);
+          const handL = [shL[0] - 9 + droop * 4, shL[1] + 40 + droop * 3];
+          drawPath(reachArm(shL, handL, 4), kArm, "pen", INK, 1.3, 0.6);
+          sd(44);
+          if (pen.held > 0.5) drawPencil(pen.tip, ang);
+          else drawPencil(pen.tip, PENCIL_GROUND.ang, 1);
+        } else if (t >= 0.1) {
+          sd(44);
+          drawPencil(PENCIL_GROUND.tip, PENCIL_GROUND.ang, E.out(seg(t, 0.1, 0.45)));
+        }
+      }
+
+      // ---------- the world: washes that fill the frame, then spill out ----------
+      const hills = (() => {
+        const p = [];
+        for (let x = F.x1 + 3; x <= F.x2 - 3; x += 18)
+          p.push([x, 420 - 26 * Math.sin((x - F.x1) / 70) - 10 * Math.sin((x - F.x1) / 23)]);
+        p.push([F.x2 - 3, F.y2 - 3], [F.x1 + 3, F.y2 - 3]);
+        return p;
+      })();
+      const meadow = (() => {
+        const p = [];
+        for (let x = 14; x <= 526; x += 24) p.push([x, G - 5 - 7 * Math.sin(x / 41)]);
+        for (let x = 526; x >= 14; x -= 24) p.push([x, G + 46 + 8 * Math.sin(x / 33)]);
+        return p;
+      })();
+      const FLOWERS = [
+        { x: 46, h: 46, c: RED, t: 7.1 },
+        { x: 236, h: 34, c: OCHRE, t: 7.25 },
+        { x: 486, h: 52, c: RED, t: 7.38 },
+        { x: 290, h: 26, c: BLUE, t: 7.5 },
+      ];
+
+      function drawWorld(t) {
+        // inside the frame: sky, sun, hills (clip-revealed, then the fills bleed)
+        const kSky = seg(t, 5.85, 6.35);
+        if (kSky > 0) {
+          sd(60);
+          brush.clip([F.x1, F.y1, F.x2, F.y1 + (F.y2 - F.y1) * E.out(kSky)]);
+          brush.noStroke();
+          brush.fill(BLUE, 95);
+          brush.fillBleed(0.22);
+          brush.fillTexture(0.55, 0.5);
+          brush.rect(F.x1 + 9, F.y1 + 8, F.x2 - F.x1 - 18, 210);
+          brush.noFill();
+          brush.noClip();
+        }
+        const kSun = seg(t, 6.05, 6.55);
+        if (kSun > 0) {
+          sd(61);
+          brush.noStroke();
+          brush.fill(OCHRE, 170 * E.out(kSun));
+          brush.fillBleed(0.3);
+          brush.fillTexture(0.4, 0.7);
+          brush.circle(SUN[0], SUN[1], 24 + 10 * E.back(kSun));
+          brush.noFill();
+        }
+        const kHill = seg(t, 6.2, 6.75);
+        if (kHill > 0) {
+          sd(62);
+          brush.clip([F.x1, F.y2 - (F.y2 - 360) * E.out(kHill), F.x2, F.y2]);
+          brush.noStroke();
+          brush.fill(GREEN, 150);
+          brush.fillBleed(0.25);
+          brush.fillTexture(0.5, 0.55);
+          brush.polygon(hills);
+          brush.noFill();
+          brush.noClip();
+        }
+        // outside the frame: the meadow runs out from under the frame across the page
+        const kMeadow = seg(t, 6.7, 7.35);
+        if (kMeadow > 0) {
+          sd(63);
+          const half = 270 * E.out(kMeadow);
+          brush.clip([317 - half, G - 30, 317 + half, G + 70]);
+          brush.noStroke();
+          brush.fill(GREEN, 120);
+          brush.fillBleed(0.3);
+          brush.fillTexture(0.5, 0.5);
+          brush.polygon(meadow);
+          brush.noFill();
+          brush.noClip();
+        }
+        // sun rays break out over the frame line
+        [-0.95, -0.4, 0.15, 0.7].forEach((a, i) => {
+          const k = E.out(seg(t, 6.85 + i * 0.07, 7.15 + i * 0.07));
+          if (k <= 0) return;
+          sd(64 + i);
+          const r0 = 46, r1 = 78 + (i % 2) * 14;
+          drawPath(dense([[SUN[0] + r0 * Math.cos(a), SUN[1] + r0 * Math.sin(a)],
+                          [SUN[0] + r1 * Math.cos(a), SUN[1] + r1 * Math.sin(a)]], 3), k, "marker", OCHRE, 1.8, 0);
+        });
+        // two clouds drift in outside the frame
+        [[112, 300, 30], [480, 548, 22]].forEach(([x, y, rr], i) => {
+          const k = seg(t, 6.95 + i * 0.15, 7.5 + i * 0.15);
+          if (k <= 0) return;
+          sd(70 + i);
+          brush.noStroke();
+          brush.fill(BLUE, 80 * E.out(k));
+          brush.fillBleed(0.3);
+          brush.fillTexture(0.5, 0.45);
+          brush.beginShape(0.6);
+          for (let j = 0; j < 9; j++) {
+            const a = (j / 9) * Math.PI * 2;
+            const rad = rr * (1 + 0.25 * Math.sin(3 * a + i)) * (0.6 + 0.4 * E.out(k));
+            brush.vertex(x + rad * 1.5 * Math.cos(a), y + rad * 0.8 * Math.sin(a));
+          }
+          brush.endShape(true);
+          brush.noFill();
+        });
+        // flowers pop up along the meadow
+        FLOWERS.forEach((f, i) => {
+          const ks = E.out(seg(t, f.t, f.t + 0.25));
+          if (ks <= 0) return;
+          sd(80 + i);
+          drawPath(dense([[f.x, G + 2], [f.x - 3, G - f.h * 0.5], [f.x + 2, G - f.h]], 2), ks, "pen", INK, 0.9, 0.6);
+          const kh = seg(t, f.t + 0.18, f.t + 0.45);
+          if (kh > 0) {
+            brush.noStroke();
+            brush.fill(f.c, 200);
+            brush.fillBleed(0.2);
+            brush.fillTexture(0.3, 0.6);
+            brush.circle(f.x + 2, G - f.h - 4, 8.5 * E.back(kh));
+            brush.noFill();
+          }
+        });
+      }
+
+      // ---------- one frame ----------
+      function renderAt(t) {
+        brush.seed(SEED); brush.noiseSeed(SEED);
+        brush.clear(PAPER);
+        brush.push();
+        brush.translate(-W / 2, -H / 2);
+
+        drawWorld(t);
+
+        // the ground line the page draws for itself
+        sd(1);
+        drawPath(groundLine, E.io(seg(t, 0, 0.5)), "HB", INK, 1.2, 0.3);
+
+        // the failed sun (with its red X), then the crumpled ball
+        const cr = crumple(t);
+        if (cr.c[0] < W + 40) {
+          PEN.filter((s) => s.grp === "fail").forEach((s) => {
+            const k = (t - s.t0) / (s.t1 - s.t0);
+            if (k <= 0) return;
+            sd(s.id);
+            drawPath(crumplePts(s.pts, cr, s.id), k, s.name, s.color, s.w, 0.4);
+          });
+        }
+        // the frame
+        PEN.filter((s) => s.grp === "frame").forEach((s) => {
+          const k = (t - s.t0) / (s.t1 - s.t0);
+          if (k <= 0) return;
+          sd(s.id);
+          drawPath(s.pts, k, s.name, s.color, s.w, 0.3);
+        });
+
+        drawPerson(t);
+
+        brush.pop();
+        brush.render();
+      }
+
+      window.addEventListener("hf-seek", (e) => renderAt(e.detail.time));
+      renderAt(0);
+
+      // ---------- GSAP: one short line per beat ----------
+      const tl = gsap.timeline({ paused: true });
+      // handwriting: a left-to-right clip reveal, paced like a pen (~0.05 s per letter)
+      const HIDE = "inset(-30% 104% -30% -4%)", SHOW = "inset(-30% -4% -30% -4%)";
+      const lineIn = (sel, at) => {
+        const n = document.querySelector(sel).textContent.length;
+        tl.set(sel, { rotation: -2.5 }, 0);
+        tl.fromTo(sel, { clipPath: HIDE }, { clipPath: SHOW, duration: 0.04 * n, ease: "power1.inOut" }, at);
+      };
+      const lineOut = (sel, at) => tl.to(sel, { opacity: 0, duration: 0.25, ease: "power2.in" }, at);
+      lineIn("#t2s", 1.5); lineOut("#t2s", 4.05);
+      lineIn("#t3s", 4.5); lineOut("#t3s", 6.5);
+      lineIn("#t4a", 6.8); lineIn("#t4b", 7.38);
+      window.__timelines["main"] = tl;
+      tl.seek(0);
+    </script>
+  </body>
+</html>

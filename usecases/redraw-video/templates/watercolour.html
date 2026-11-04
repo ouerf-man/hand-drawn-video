@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=__W2__, height=__H2__" />
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.15.0/dist/gsap.min.js"></script>
+    <script src="assets/vendor/brush.js"></script>
+    <script src="assets/data.js"></script>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { width: __W2__px; height: __H2__px; overflow: hidden; background: #f4efe4; }
+      #root { position: relative; width: 100%; height: 100%; }
+      #paper { position: absolute; inset: 0; }
+      #paper canvas { display: block; width: __W2__px !important; height: __H2__px !important; }
+    </style>
+  </head>
+  <body>
+    <div id="root" data-composition-id="main" data-start="0" data-duration="__DUR__" data-width="__W2__" data-height="__H2__">
+      <div id="paper" class="clip" data-start="0" data-duration="__DUR__" data-track-index="0" data-track-kind="graphics"></div>
+    </div>
+    <script>
+      // Watercolour + ink style: tone groups painted light -> dark, then features placed from face landmarks.
+      const D = window.DRAWIFY, W = D.w, H = D.h;
+      const PAPER = "#f4efe4", INK = "#23201c", DARK = "#1f1613", WARM = "#b27a66";
+      const PAL = D.palette || {};
+      brush.createCanvas(W, H, { parent: document.getElementById("paper"), pixelDensity: 2 });
+      brush.scaleBrushes(2.6 * W / 540);
+      brush.angleMode(brush.RADIANS);
+
+      const pts = (f) => { const o = []; for (let i = 0; i < f.length; i += 2) o.push([f[i], f[i + 1]]); return o; };
+      const pts3 = (f) => { const o = []; for (let i = 0; i < f.length; i += 3) o.push([f[i], f[i + 1], f[i + 2]]); return o; };
+      const sd = (n) => { brush.seed(n); brush.noiseSeed(n); };          // one seed per element: no shimmer
+      const tint = (hex, k) => { const c = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)), p = [0xf4, 0xef, 0xe4];
+        return "#" + c.map((v, i) => Math.round(v * k + p[i] * (1 - k)).toString(16).padStart(2, "0")).join(""); };
+      const mix = (a, b, k) => { const A = [1, 3, 5].map((i) => parseInt(a.slice(i, i + 2), 16)), B = [1, 3, 5].map((i) => parseInt(b.slice(i, i + 2), 16));
+        return "#" + A.map((v, i) => Math.round(v * (1 - k) + B[i] * k).toString(16).padStart(2, "0")).join(""); };
+      const circle = (cx, cy, r, n = 18) => Array.from({ length: n }, (_, k) => [cx + r * Math.cos(k / n * 6.2832), cy + r * Math.sin(k / n * 6.2832)]);
+      const shift = (P, dy) => P.map((q) => [q[0], q[1] + dy]);
+      const taper = (P, w) => P.map((q, k) => [q[0], q[1], 0.25 + w * Math.sin(Math.PI * k / Math.max(1, P.length - 1))]);
+      const SOFT = (bleed = 0.1) => { brush.fillBleed(bleed); brush.fillTexture(0.3, 0.35, false, 0.08); };
+      const SHADE = () => tint(mix(PAL["1h"] || "#8a5a4c", WARM, 0.45), 0.9);
+
+      function background() {
+        brush.noStroke();
+        D.bg.fills.forEach((f, i) => { sd(500 + i); brush.fillBleed(0.15); brush.fillTexture(0.4, 0.35); brush.fill(tint(f.c, 0.7), 60); brush.polygon(pts(f.pts)); });
+        brush.noFill();
+        D.bg.lines.forEach((l, i) => { sd(900 + i); brush.set("HB", INK, 0.7); brush.spline(pts(l), 0.3); });
+      }
+
+      function person(fr, d) {
+        const base = 10000 + d * 1000;            // a new seed every drawing = the hand-drawn boil
+        if (fr.sil.length) { sd(base); brush.noStroke(); brush.wash(PAPER, 255); brush.polygon(pts3(fr.sil).map((q) => [q[0], q[1]])); brush.noWash(); }
+        const M = fr.marks || {};
+        if (M.face) {   // skin base under the whole face: neighbouring washes touch, no paper gaps
+          sd(base + 1); brush.noStroke(); SOFT(0.12); brush.fill(tint(PAL["2h"] || "#c08f7e", 0.8), 110); brush.polygon(pts(M.face)); brush.noFill();
+        }
+        for (let r = 3; r >= 0; r--) {
+          fr.tones.forEach((t, i) => {
+            if (t.r !== r) return;
+            const head = t.h, col = PAL[r + (head ? "h" : "b")] || "#a07a6a", poly = pts(t.p);
+            const ang = (head && r === 0 ? 0.35 : 0.75) + (((i * 37) % 5) - 2) * 0.12;
+            sd(base + 50 + r * 200 + i);
+            brush.noStroke();
+            if (r === 0 && head) {
+              // a watercolour fill tops out at mid-grey: the value comes from a wash on the core
+              SOFT(0.08); brush.fill(DARK, 255); brush.polygon(poly); brush.noFill();
+              if (t.core && t.core.length) t.core.forEach((c) => { brush.wash(DARK, 200); brush.polygon(pts(c)); brush.noWash(); });
+              else { brush.wash(DARK, 175); brush.polygon(poly); brush.noWash(); }
+              brush.hatch(2.8, ang, { rand: 0.2 }); brush.hatchStyle("HB", INK, 0.85); brush.polygon(poly); brush.noHatch();
+            } else if (r <= 1) {
+              SOFT(); brush.fill(head ? SHADE() : tint(col, 0.9), head ? 115 : 150); brush.polygon(poly); brush.noFill();
+              brush.hatch(head ? 3.8 : 4.6, ang, { rand: 0.25 }); brush.hatchStyle("2H", INK, 0.65); brush.polygon(poly); brush.noHatch();
+            } else {
+              SOFT(); brush.fill(tint(col, r === 2 ? 0.9 : 0.75), r === 2 ? 150 : 100); brush.polygon(poly); brush.noFill();
+            }
+          });
+        }
+        fr.lines.forEach((l, i) => { sd(base + 1500 + i); brush.set("pen", INK, 0.7); brush.spline(pts3(l), 0.25); });
+
+        (M.sockets || []).forEach((k, i) => {   // blend the eye socket into the cheek (no light "goggles")
+          sd(base + 1880 + i); brush.noStroke(); SOFT(0.15); brush.fill(SHADE(), 75); brush.polygon(pts(k)); brush.noFill();
+        });
+        if (M.beard) {   // one continuous, textured dark mass (only present when the person has a beard)
+          // value target from the footage (its own average colour), dark only in the core: no pasted-on block
+          M.beard.p.forEach((b, i) => {
+            const poly = pts(b);
+            sd(base + 1850 + i); brush.noStroke(); SOFT(0.14); brush.fill(M.beard.c, 230); brush.polygon(poly); brush.noFill();
+            brush.hatch(2.4, 1.25, { rand: 0.45 }); brush.hatchStyle("HB", INK, 0.8); brush.polygon(poly); brush.noHatch();
+          });
+          (M.beard.core || []).forEach((c, i) => {
+            sd(base + 1860 + i); brush.noStroke(); brush.wash(mix(M.beard.c, DARK, 0.45), 150); brush.polygon(pts(c)); brush.noWash();
+          });
+        }
+        if (M.nose) {   // shadow side of the nose, the shadow under the tip, nostrils
+          sd(base + 1900); brush.noStroke(); SOFT(0.15); brush.fill(SHADE(), 140); brush.polygon(pts(M.nose.shadow)); brush.noFill();
+          if (M.under_tip) { sd(base + 1899); brush.noStroke(); SOFT(0.15); brush.fill(SHADE(), 130); brush.polygon(pts(M.under_tip)); brush.noFill(); }
+          sd(base + 1901); brush.set("HB", INK, 0.8); brush.spline(taper(pts(M.nose.under), 0.8), 0.6);
+          M.nose.nostrils.forEach((n, i) => { sd(base + 1902 + i); brush.noStroke(); brush.wash(DARK, 150);
+            brush.polygon(circle(n[0], n[1], M.nose.nostril_r * 0.75, 12).map((q) => [q[0], n[1] + (q[1] - n[1]) * 0.6])); brush.noWash(); });
+        }
+        if (M.lips) {   // rose lower lip, one tapered line where the lips meet
+          // lips: a transparent wash like everything else (an opaque fill looks pasted on), pulled toward skin,
+          // upper lip darker; closed = one shape + the tapered line, open = upper and lower lips + a dark inside
+          const lipC = mix(M.lips.c, PAL["2h"] || "#c08f7e", 0.3);
+          if (M.lips.open) {
+            sd(base + 1944); brush.noStroke(); brush.wash("#2a1715", 215); brush.polygon(pts(M.lips.inner)); brush.noWash();
+            sd(base + 1945); SOFT(0.08); brush.fill(lipC, 170); brush.polygon(pts(M.lips.upper)); brush.polygon(pts(M.lips.lower)); brush.noFill();
+          } else {
+            sd(base + 1945); brush.noStroke(); SOFT(0.08); brush.fill(lipC, 170); brush.polygon(pts(M.lips.outer)); brush.noFill();
+          }
+          sd(base + 1946); brush.noStroke(); SOFT(0.06); brush.fill(mix(lipC, DARK, 0.3), 90); brush.polygon(pts(M.lips.upper)); brush.noFill();
+          sd(base + 1951); brush.set("pen", INK, 1.1); brush.spline(taper(pts(M.lips.line), 0.9), 0.5);
+        }
+        (M.eyes || []).forEach((e, i) => {   // white of the eye, iris, then the hooded lid over the top of the iris
+          const up = pts(e.upper), low = pts(e.lower), [ex, ey, r] = e.iris;
+          sd(base + 1980 + i * 6); brush.noStroke(); brush.wash("#efe4d8", 215); brush.polygon(up.concat(low)); brush.noWash();
+          brush.wash("#4a2e1f", 225); brush.polygon(circle(ex, ey, r)); brush.noWash();
+          brush.wash(DARK, 235); brush.polygon(circle(ex, ey, r * 0.42, 12)); brush.noWash();
+          brush.wash(PAPER, 225); brush.polygon(circle(ex + r * 0.3, ey - r * 0.25, Math.max(0.5, r * 0.18), 8)); brush.noWash();
+          const lid = shift(up, r * 0.3);
+          sd(base + 1981 + i * 6); brush.wash(SHADE(), 215); brush.polygon(shift(up, -r * 0.15).concat(lid.slice().reverse())); brush.noWash();
+          sd(base + 1982 + i * 6); brush.set("pen", INK, 1.6); brush.spline(taper(lid, 1.0), 0.45);
+          sd(base + 1983 + i * 6); brush.set("2B", INK, 0.7); brush.spline(taper(shift(up, -r * 0.95), 0.6), 0.45);
+          sd(base + 1984 + i * 6); brush.set("2H", INK, 0.6); brush.spline(taper(low, 0.5), 0.45);
+        });
+        (M.brows || []).forEach((b, i) => {   // the person's own brow shape as a soft dark mass
+          const poly = pts(b);
+          sd(base + 2050 + i); brush.noStroke(); SOFT(0.05); brush.fill(DARK, 255); brush.polygon(poly); brush.noFill();
+          brush.wash(DARK, 150); brush.polygon(poly); brush.noWash();
+          brush.hatch(2.2, 0.25, { rand: 0.2 }); brush.hatchStyle("HB", INK, 0.8); brush.polygon(poly); brush.noHatch();
+        });
+        if (fr.sil.length) { sd(base + 999); brush.set("pen", INK, 1.1); const s = pts3(fr.sil); s.push(s[0]); brush.spline(s, 0.4); }
+      }
+
+      function renderAt(t) {
+        const d = Math.min(D.frames.length - 1, Math.max(0, Math.floor(t * D.fps + 1e-6)));
+        brush.clear(PAPER);
+        brush.push();
+        try { brush.translate(-W / 2, -H / 2); background(); person(D.frames[d], d); }
+        finally { brush.pop(); }                     // an error must not leave the transform pushed
+        brush.render();
+      }
+      window.addEventListener("hf-seek", (e) => renderAt(e.detail.time));
+      // p5.brush quirk: the very first hatch on a page can throw "No brush or color set"; a warm-up pass fixes it
+      try { renderAt(0); } catch (e) {}
+      renderAt(0);
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+      window.__timelines["main"] = tl;
+      tl.seek(0);
+    </script>
+  </body>
+</html>
