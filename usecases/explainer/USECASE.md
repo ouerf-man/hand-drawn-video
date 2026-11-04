@@ -8,7 +8,7 @@ Use for: how something works, a process, a before/after, a list of tips, "3 step
 1. **The words** are HTML: the title (`#titleKick`, `#titleBig`), one label block per step (`#lab1` ... `#lab4`, a title and a sub-line), and the closing line (`#ctaKick`, `#ctaBig`). Keep each label to 2-4 words; the sub-line to about 4 words.
 2. **The drawings** are in `renderAt(t)`, one block per step (`STEP 1` ... `STEP 4`), placed at `XL`/`XR` and `ROW[i]`. Replace each with a simple picture of that step: a few lines, one wash, at most one hatch or crayon mass. Reuse the helpers: `drawOn`, `wash`, `hatchReveal`, `massReveal`, `arrow`, `headAndShoulders`, `rectPts`, `roundRectPts`, `blobPts`, `wobbleLine`.
 3. **The timing**: each step owns about 1.5 s. Its outline starts, the wash follows 0.2 s later, the label is written while it draws, then the arrow to the next step. Move the `seg(t, a, b)` times and the `write(...)` times together.
-4. **More or fewer steps**: add or remove a row in `ROW`, a block in `renderAt`, a label div and its `write` calls, and change `data-duration` on `#root` and its clips.
+4. **More or fewer steps**: add or remove a row in `ROW`, a block in `renderAt`, a label div and its `write` calls, and change `data-duration` on `#root` and its clips. `ROW` (brush units) and each label's `top` (px, about ROW×2−60) move together, and so do the arrow ends; with fewer steps, spread the rows so the bottom of the frame is not empty.
 
 ## Its own checks
 - Labels sit beside drawings, never on them; nothing touches the edges.

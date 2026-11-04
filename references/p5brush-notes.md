@@ -41,10 +41,10 @@ Colours mix like real pigment (Kubelka-Munk): blue over yellow gives green, not 
 
 ## Traps (each one cost a render)
 - **Forgot `brush.render()`**: blank frame.
-- **An error between `push` and `pop`** stacks the transform on every later frame: wrap the drawing in `try { } finally { brush.pop(); }`.
+- **An error between `push` and `pop`** stacks the transform on every later frame: when you add drawing that can throw, wrap it in `try { } finally { brush.pop(); }` (the `blank` template does; add it to the others when you change them a lot).
 - **One seed per frame is not enough.** A growing stroke consumes random numbers and changes every later stroke's texture: call `sd(id)` (own seed) before each element.
 - **`brush.arc` with a full 2π sweep draws nothing.** Stop at about 1.96π.
-- **`fill`, `wash`, `mass` ignore `brush.clip`.** Reveal them with alpha or by growing the shape, or clip a hatch instead.
+- **`fill` and `wash` ignore `brush.clip`** (`mass` follows it). Reveal fills and washes with alpha or by growing the shape, or clip a hatch instead.
 - **`noHatch()` forgets `hatchStyle`.** Set the style again before the next hatch.
 - **The first hatch on a page can throw "No brush or color set".** Draw one throwaway frame first (`renderAt(0)` at load does this).
 - **A watercolour fill at alpha 230 only reaches mid-grey.** For dark areas use `wash` (255 gives near black).

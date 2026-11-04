@@ -13,14 +13,14 @@ Runs on **Windows and macOS** (Python 3.9-3.12, tested in CI on both). It is one
 
 ## Install
 ```
-python -m pip install -r requirements.txt
-python usecases/redraw-video/drawify.py --doctor
+<skill Python> -m pip install -r requirements.txt
+<skill Python> usecases/redraw-video/drawify.py --doctor
 ```
 (Commands run from the skill folder.) `--doctor` downloads p5.brush (if not cached yet) and the two MediaPipe models once (face landmarks ~3.7 MB, person segmenter ~0.25 MB, Apache-2.0, into `~/.cache/drawify`) and checks the setup. Rendering needs **Node.js 18+** (HyperFrames runs through `npx`); the wipe needs **ffmpeg**.
 
 ## Use
 ```
-python usecases/redraw-video/drawify.py talk.mp4 --start 2 --duration 3 --style print --out my-drawing --render --wipe
+<skill Python> usecases/redraw-video/drawify.py talk.mp4 --start 2 --duration 3 --style print --out my-drawing --render --wipe
 ```
 | Option | Meaning |
 |---|---|
@@ -36,7 +36,7 @@ Without `--render` you get a HyperFrames project (`index.html`, `assets/data.js`
 
 ## How it works
 1. **Drawings.** The clip is sampled 12 times a second. Each drawing is held for 2-3 video frames and gets a new random seed, so lines shimmer slightly between drawings, the classic hand-drawn "boil".
-2. **The person.** A matte separates the person from the background. The background is drawn **once**, so only the person moves.
+2. **The person.** A matte separates the person from the background. In `watercolour` the background is drawn **once**, so only the person moves; `print` leaves plain paper behind the person.
 3. **Face landmarks.** MediaPipe Face Landmarker gives 478 points per drawing: brows, eyelids, irises, nose and lips.
 4. **Light.** One-sided light pushes the lit side's brow, beard and nose out of the dark tones. A plane is fitted to the lightness of the skin and its slope is removed, **on skin only**: hair and beard are dark in themselves, not shadowed.
 5. **Four tone groups.** Pixels are grouped by lightness *and* colour strength (Lab chroma). Hair and beard are dark and grey; skin in shadow is dark but saturated, so this separates them where brightness alone cannot. The groups and the colours are fixed from the first drawing, so nothing flickers.
@@ -61,4 +61,4 @@ It was tuned in seven rounds against an independent reviewer that compared real 
 ## Notes
 - `assets/vendor/brush.js` in a generated project is the official p5.brush build ([MIT](https://github.com/acamposuribe/p5.brush), by Alejandro Campos Uribe), downloaded once and checked by `scripts/brushlib.py`, with two lines neutralised for HyperFrames' determinism lint: the library's random initial seed (`Math.random()`; the drawing re-seeds every frame anyway) and a "you forgot `render()`" warning timer.
 - Best on front or three-quarter faces, one person. Hands are drawn as shapes.
-- Smoke test (synthetic clip, no models needed): `python usecases/redraw-video/tests/smoke_test.py`.
+- Smoke test (synthetic clip, no models needed): `<skill Python> usecases/redraw-video/tests/smoke_test.py`.

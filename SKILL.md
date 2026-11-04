@@ -9,10 +9,10 @@ Everything on screen is painted by [p5.brush](https://github.com/acamposuribe/p5
 
 ## 1. Set up (once)
 - Node.js 18+ (HyperFrames runs through `npx`).
-- Python 3.9+ to start projects (`scripts/new_project.py`).
-- Internet the first time: p5.brush is not shipped with the skill. `scripts/brushlib.py` downloads the official build (pinned version, SHA-256 checked) into `kit/.cache/` once, and every project gets a copy.
+- **The skill Python:** `~/.cache/hand-drawn-video/venv/bin/python` (Windows `%USERPROFILE%\.cache\hand-drawn-video\venv\Scripts\python.exe`), made by `INSTALL.md` step 5 from a Python 3.10-3.12. Use it for every command below. If it is missing, run `INSTALL.md` steps 4-7. Never `pip install` into the system Python (Homebrew Python refuses it), and on Mac the command is `python3`, not `python`.
+- Internet: the first time, `scripts/brushlib.py` downloads p5.brush (pinned version, SHA-256 checked) into `kit/.cache/`; every project gets a copy. Renders also load GSAP from cdn.jsdelivr.net, so rendering needs internet.
 - The **redraw-video** use case needs more (MediaPipe, ffmpeg): see its `USECASE.md`.
-Done when: `npx --yes hyperframes --version` prints a version and `python scripts/brushlib.py` prints `p5.brush ... ok`.
+Done when: `npx --yes hyperframes --version` prints a version and `<skill Python> scripts/brushlib.py` prints `p5.brush ... ok`.
 
 ## 2. Pick the use case
 | Use case | What it makes | Start with |
@@ -27,9 +27,9 @@ Done when: the use case is chosen and the content is agreed (the words, the beat
 
 ## 3. Start the project
 ```
-python scripts/new_project.py <use case> <new folder>
+<skill Python> scripts/new_project.py <use case> "<Documents>/<new folder>"
 ```
-(`--list` shows the use cases.) `redraw-video` is the exception: it runs its own tool (`USECASE.md`).
+Put the project in the user's Documents folder (an absolute path; on Windows it may be inside OneDrive), never inside the skill folder: updating the skill replaces that folder. (`--list` shows the use cases.) `redraw-video` is the exception: it runs its own tool (`USECASE.md`).
 Done when: the folder has `index.html`, `assets/vendor/brush.js` (p5.brush, patched for the HyperFrames lint) and `assets/fonts/`.
 
 ## 4. Make it yours: rules for good hand-drawn work

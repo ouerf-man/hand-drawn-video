@@ -5,9 +5,9 @@ Turn a real clip of a person into a hand-drawn animation, redrawn 12 times a sec
 `drawify.py` (next to this file) does the whole job; commands below run from the skill folder. You run it, look at the frames, and adjust.
 
 ## 1. Set up (once)
-- Python 3.9-3.12: `python -m pip install -r requirements.txt` (skill folder; MediaPipe brings OpenCV and NumPy).
+- Python 3.10-3.12 through the skill Python (`~/.cache/hand-drawn-video/venv/bin/python`, Windows `...\venv\Scripts\python.exe`, see `INSTALL.md` step 5): `<skill Python> -m pip install -r requirements.txt` (skill folder; MediaPipe brings OpenCV and NumPy).
 - Node.js 18+ for rendering (HyperFrames runs through `npx`). ffmpeg only for the optional wipe.
-- `python usecases/redraw-video/drawify.py --doctor`: downloads p5.brush (if not cached yet) and the two MediaPipe models once (face landmarks ~3.7 MB, person segmenter ~0.25 MB, to `~/.cache/drawify`) and checks everything.
+- `<skill Python> usecases/redraw-video/drawify.py --doctor`: downloads p5.brush (if not cached yet) and the two MediaPipe models once (face landmarks ~3.7 MB, person segmenter ~0.25 MB, to `~/.cache/drawify`) and checks everything.
 Done when: the doctor prints `models load: ok` and finds `npx`.
 
 ## 2. Pick the moment and the style
@@ -29,8 +29,10 @@ Good input matters more than settings. Tell the person what to change when a rul
 
 ## 3. Run
 ```
-python usecases/redraw-video/drawify.py VIDEO --start S --duration D --style print --out OUT_FOLDER --render --wipe
+<skill Python> usecases/redraw-video/drawify.py VIDEO --start S --duration D --style print --out OUT_FOLDER --render --wipe
 ```
+`OUT_FOLDER` must be an absolute path in the user's Documents folder: the default `drawify-out` lands inside the skill folder, and the next update deletes it. The first `--doctor` can take a few minutes; TensorFlow/absl warnings are normal.
+
 Without `--render` it only writes the HyperFrames project; render later with `npx hyperframes render . -o drawn.mp4` inside it.
 Done when: `OUT_FOLDER/renders/drawn-<style>.mp4` exists (and `wipe-<style>.mp4` with `--wipe`).
 
